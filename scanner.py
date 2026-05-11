@@ -4,15 +4,21 @@ import ssl
 import socket
 import threading
 import datetime
+import html
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from utils import limpar_tela, carregando
+
+# ThreadPoolExecutor substitui threads manuais — evita saturação de descritores
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 def normalizar_url(url, padrao="https"):
     url = url.strip()
     if not url.startswith("http://") and not url.startswith("https://"):
         url = f"{padrao}://{url}"
     return url
+
 
 def escolher_url(cursor):
     limpar_tela()
@@ -71,6 +77,7 @@ def escolher_url(cursor):
             return None
         return url
 
+
 def analisar_headers_menu(cursor=None, url=None):
     print("Análise de Headers HTTP\n")
     if not url or url.lower() == "cancelar":
@@ -99,6 +106,7 @@ def analisar_headers_menu(cursor=None, url=None):
         print("Não foi possível acessar a URL informada. Verifique se ela existe, está correta e acessível pela internet.")
     input("\nPressione Enter para voltar...")
 
+
 def analisar_ssl_menu(cursor=None, url=None):
     print("Análise de Certificado SSL/TLS\n")
     if not url or url.lower() == "cancelar":
@@ -121,7 +129,9 @@ def analisar_ssl_menu(cursor=None, url=None):
         print(f"Certificado SSL/TLS para {domain}:")
         print(f"Emitido em: {issue_date}")
         print(f"Expira em: {expiry_date}")
-        dias_restantes = (expiry_date - datetime.datetime.utcnow()).days
+        # FIX: datetime.utcnow() depreciado em 3.12+ — usa timezone-aware agora
+        agora = datetime.datetime.now(tz=datetime.timezone.utc).replace(tzinfo=None)
+        dias_restantes = (expiry_date - agora).days
         print(f"Dias restantes para expiração: {dias_restantes} dias")
         if dias_restantes < 0:
             print("O certificado está expirado!")
@@ -132,6 +142,7 @@ def analisar_ssl_menu(cursor=None, url=None):
     except Exception:
         print("Não foi possível acessar o domínio informado via HTTPS. Verifique se ele suporta SSL/TLS e está online.")
     input("\nPressione Enter para voltar...")
+
 
 def xss_scanner_menu(cursor=None, url=None):
     print("Scanner XSS\n")
@@ -163,7 +174,10 @@ def xss_scanner_menu(cursor=None, url=None):
                         r = requests.post(full_url, data=data, timeout=5)
                     else:
                         r = requests.get(full_url, params=data, timeout=5)
-                    if payload in r.text:
+                    # FIX: desescapa HTML antes de checar — evita falso negativo
+                    # quando servidor retorna &lt;script&gt; ao invés do payload bruto
+                    texto_desescapado = html.unescape(r.text)
+                    if payload in r.text or payload in texto_desescapado:
                         print(f"[!] Formulário {i}: possível XSS detectado em {full_url}")
                     else:
                         print(f"[✓] Formulário {i}: sem reflexão de payload em {full_url}")
@@ -172,6 +186,7 @@ def xss_scanner_menu(cursor=None, url=None):
     except Exception:
         print("Não foi possível acessar a URL informada.")
     input("\nPressione Enter para voltar...")
+
 
 def port_scan_menu(cursor=None, url=None):
     print("Port Scanner\n")
@@ -183,29 +198,30 @@ def port_scan_menu(cursor=None, url=None):
     host = url.replace("https://", "").replace("http://", "").split("/")[0]
     portas_comuns = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 3306, 3389, 5432, 8080, 8443]
     abertas = []
-    lock = threading.Lock()
 
     def verificar_porta(porta):
         try:
             with socket.create_connection((host, porta), timeout=1):
-                with lock:
-                    abertas.append(porta)
+                return porta
         except Exception:
-            pass
+            return None
 
-    threads = []
-    for p in portas_comuns:
-        t = threading.Thread(target=verificar_porta, args=(p,))
-        threads.append(t)
-        t.start()
-    for t in threads:
-        t.join()
+    # FIX: ThreadPoolExecutor com max_workers fixo — evita saturação de descritores
+    # sob listas grandes de portas. Escolhido sobre threading.Thread manual porque
+    # oferece controle de concorrência, coleta de resultado e tratamento de exceção.
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        futures = {executor.submit(verificar_porta, p): p for p in portas_comuns}
+        for future in as_completed(futures):
+            resultado = future.result()
+            if resultado is not None:
+                abertas.append(resultado)
 
     if abertas:
         print(f"Portas abertas em {host}: {sorted(abertas)}")
     else:
         print(f"Nenhuma porta comum aberta encontrada em {host}.")
     input("\nPressione Enter para voltar...")
+
 
 def menu_cybersecurity(cursor):
     while True:
