@@ -1,0 +1,25 @@
+# Banco de dados local
+azya.db
+
+# Resultados de testes
+azya_resultados.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Ambientes virtuais
+venv/
+.venv/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
