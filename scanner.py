@@ -18,14 +18,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 _PAYLOADS_PATH = os.path.join(os.path.dirname(__file__), "payloads", "xss_payloads.json")
 
 def _carregar_payloads():
-    # type: () -> dict
-    """Carrega payloads do JSON externo. Falha explícita se arquivo ausente."""
     with open(_PAYLOADS_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers de URL
 # ---------------------------------------------------------------------------
 def normalizar_url(url, padrao="https"):
     url = url.strip()
@@ -35,73 +33,70 @@ def normalizar_url(url, padrao="https"):
 
 
 def _resolver_url(cursor, conn, sessao):
-    # type: (object, object, dict) -> object
     """
-    Retorna URL para o scan:
-    - Alvo ativo na sessão → usa direto, sem perguntar.
-    - Sem alvo ativo → fallback para escolher_url().
+    Resolucao de URL para o scan:
+      1. Alvo ativo na sessao  -> usa direto, sem prompt.
+      2. Sem alvo ativo        -> lista alvos cadastrados OU permite digitar avulso.
+    Scans avulsos (sem alvo_id) nao sao salvos no banco.
     """
     ativo = sessao.get('alvo_ativo') if sessao else None
     if ativo:
         print("Usando alvo ativo: [{}] {}".format(ativo['nome'], ativo['url']))
         time.sleep(1)
         return ativo['url']
-    return escolher_url(cursor)
+
+    # Sem alvo ativo: oferece alvos cadastrados ou digitacao avulsa
+    limpar_tela()
+    print("Nenhum alvo ativo.\n")
+    from db import listar_alvos, _montar_url_alvo
+    alvos = listar_alvos(cursor)
+    if alvos:
+        from db import _exibir_alvos
+        _exibir_alvos(alvos)
+        print("  A. Digitar URL avulsa (sem salvar)")
+        print("  0. Cancelar")
+        escolha = input("\nID do alvo ou 'A' para avulso: ").strip().upper()
+        if escolha == '0' or not escolha:
+            return None
+        if escolha == 'A':
+            return _pedir_url_avulsa()
+        try:
+            idx = int(escolha)
+            for row in alvos:
+                if row[0] == idx:
+                    return _montar_url_alvo(row)
+            print("ID nao encontrado."); time.sleep(1); return None
+        except ValueError:
+            print("Invalido."); time.sleep(1); return None
+    else:
+        print("Nenhum alvo cadastrado.")
+        print("1. Digitar URL avulsa")
+        print("0. Cancelar")
+        escolha = input("Opcao: ").strip()
+        if escolha == '1':
+            return _pedir_url_avulsa()
+        return None
+
+
+def _pedir_url_avulsa():
+    url = input("URL (ex: http://192.168.1.10): ").strip()
+    if not url or url.lower() == 'cancelar':
+        print("Cancelado."); time.sleep(1); return None
+    return url
 
 
 def _get_alvo_id(sessao):
-    # type: (dict) -> object
     ativo = sessao.get('alvo_ativo') if sessao else None
     return ativo['id'] if ativo else None
-
-
-def escolher_url(cursor):
-    limpar_tela()
-    print("Escolha a origem da URL para análise:")
-    print("1. Selecionar uma URL salva")
-    print("2. Digitar uma nova URL")
-    escolha = input("Opção: ").strip()
-    if not escolha or escolha.lower() == "cancelar":
-        print("Operação cancelada."); time.sleep(1); return None
-    if escolha == "1":
-        cursor.execute("SELECT id, url FROM urls")
-        urls = cursor.fetchall()
-        if not urls:
-            print("Nenhuma URL salva. Digite uma nova ou 'cancelar'.")
-            url = input("URL: ").strip()
-            if not url or url.lower() == "cancelar":
-                print("Operação cancelada."); time.sleep(1); return None
-            return url
-        print("\nURLs salvas:")
-        for row in urls:
-            print("{}: {}".format(row[0], row[1]))
-        idx = input("ID da URL (ou 'cancelar'): ").strip()
-        if not idx or idx.lower() == "cancelar":
-            print("Operação cancelada."); time.sleep(1); return None
-        try:
-            idx = int(idx)
-            for row in urls:
-                if row[0] == idx:
-                    return row[1]
-            url = input("ID não encontrado. URL: ").strip()
-            return url if url and url.lower() != "cancelar" else None
-        except ValueError:
-            url = input("ID inválido. URL: ").strip()
-            return url if url and url.lower() != "cancelar" else None
-    else:
-        url = input("URL: ").strip()
-        if not url or url.lower() == "cancelar":
-            print("Operação cancelada."); time.sleep(1); return None
-        return url
 
 
 # ---------------------------------------------------------------------------
 # Header Analysis
 # ---------------------------------------------------------------------------
 def analisar_headers_menu(cursor=None, conn=None, sessao=None, url=None):
-    print("Análise de Headers HTTP\n")
+    print("Analise de Headers HTTP\n")
     if not url or url.lower() == "cancelar":
-        print("Operação cancelada."); time.sleep(1); return
+        print("Operacao cancelada."); time.sleep(1); return
     url = normalizar_url(url, padrao="http")
     linhas = []
     try:
@@ -116,11 +111,11 @@ def analisar_headers_menu(cursor=None, conn=None, sessao=None, url=None):
         print("Checagem dos principais headers:\n")
         for h in principais:
             valor = response.headers.get(h)
-            linha = "Header '{}' encontrado: {}".format(h, valor) if valor else "Header '{}' não encontrado.".format(h)
+            linha = "Header '{}' encontrado: {}".format(h, valor) if valor else "Header '{}' nao encontrado.".format(h)
             print(linha)
             linhas.append(linha)
     except Exception:
-        print("Não foi possível acessar a URL informada.")
+        print("Nao foi possivel acessar a URL informada.")
         input("\nPressione Enter para voltar..."); return
 
     if conn and sessao:
@@ -128,7 +123,7 @@ def analisar_headers_menu(cursor=None, conn=None, sessao=None, url=None):
         if alvo_id and linhas:
             from db import salvar_resultado
             salvar_resultado(cursor, conn, alvo_id, "headers", "\n".join(linhas))
-            print("\n[✓] Resultado salvo.")
+            print("\n[+] Resultado salvo.")
 
     input("\nPressione Enter para voltar...")
 
@@ -137,9 +132,9 @@ def analisar_headers_menu(cursor=None, conn=None, sessao=None, url=None):
 # SSL Analysis
 # ---------------------------------------------------------------------------
 def analisar_ssl_menu(cursor=None, conn=None, sessao=None, url=None):
-    print("Análise de Certificado SSL/TLS\n")
+    print("Analise de Certificado SSL/TLS\n")
     if not url or url.lower() == "cancelar":
-        print("Operação cancelada."); time.sleep(1); return
+        print("Operacao cancelada."); time.sleep(1); return
     url = normalizar_url(url, padrao="https")
     domain = url.replace("https://", "").replace("http://", "").split("/")[0]
     linhas = []
@@ -149,14 +144,14 @@ def analisar_ssl_menu(cursor=None, conn=None, sessao=None, url=None):
             with context.wrap_socket(sock, server_hostname=domain) as ssock:
                 cert = ssock.getpeercert()
         if not cert:
-            print("Não foi possível obter o certificado SSL/TLS."); time.sleep(2); return
+            print("Nao foi possivel obter o certificado SSL/TLS."); time.sleep(2); return
         issue_date = datetime.datetime.strptime(cert['notBefore'], '%b %d %H:%M:%S %Y %Z')
         expiry_date = datetime.datetime.strptime(cert['notAfter'], '%b %d %H:%M:%S %Y %Z')
         agora = datetime.datetime.now(tz=datetime.timezone.utc).replace(tzinfo=None)
         dias_restantes = (expiry_date - agora).days
-        status = "EXPIRADO" if dias_restantes < 0 else ("PRÓXIMO DA EXPIRAÇÃO" if dias_restantes < 30 else "VÁLIDO")
+        status = "EXPIRADO" if dias_restantes < 0 else ("PROXIMO DA EXPIRACAO" if dias_restantes < 30 else "VALIDO")
         linhas = [
-            "Domínio: {}".format(domain),
+            "Dominio: {}".format(domain),
             "Emitido em: {}".format(issue_date),
             "Expira em: {}".format(expiry_date),
             "Dias restantes: {}".format(dias_restantes),
@@ -165,7 +160,7 @@ def analisar_ssl_menu(cursor=None, conn=None, sessao=None, url=None):
         for l in linhas:
             print(l)
     except Exception:
-        print("Não foi possível acessar o domínio via HTTPS.")
+        print("Nao foi possivel acessar o dominio via HTTPS.")
         input("\nPressione Enter para voltar..."); return
 
     if conn and sessao:
@@ -173,16 +168,15 @@ def analisar_ssl_menu(cursor=None, conn=None, sessao=None, url=None):
         if alvo_id and linhas:
             from db import salvar_resultado
             salvar_resultado(cursor, conn, alvo_id, "ssl", "\n".join(linhas))
-            print("\n[✓] Resultado salvo.")
+            print("\n[+] Resultado salvo.")
 
     input("\nPressione Enter para voltar...")
 
 
 # ---------------------------------------------------------------------------
-# XSS Scanner — sub-rotinas
+# XSS Scanner - sub-rotinas
 # ---------------------------------------------------------------------------
 def _check_reflexao(texto, payload):
-    # type: (str, str) -> bool
     return payload in texto or payload in html.unescape(texto)
 
 
@@ -252,9 +246,8 @@ def _test_stored(url, soup, session):
 
 
 def _formatar_resultados_xss(todos):
-    # type: (list) -> str
     if not todos:
-        return "[✓] Nenhuma vulnerabilidade XSS detectada com os payloads utilizados."
+        return "[+] Nenhuma vulnerabilidade XSS detectada com os payloads utilizados."
     linhas = []
     for res in todos:
         tipo = res['tipo']
@@ -272,17 +265,17 @@ def _formatar_resultados_xss(todos):
 
 
 # ---------------------------------------------------------------------------
-# XSS Scanner — menu principal
+# XSS Scanner - menu principal
 # ---------------------------------------------------------------------------
 def xss_scanner_menu(cursor=None, conn=None, sessao=None, url=None):
     print("Scanner XSS\n")
     if not url or url.lower() == "cancelar":
-        print("Operação cancelada."); time.sleep(1); return
+        print("Operacao cancelada."); time.sleep(1); return
     url = normalizar_url(url, padrao="http")
     try:
         dados = _carregar_payloads()
     except FileNotFoundError:
-        print("[ERRO] Arquivo de payloads não encontrado: {}".format(_PAYLOADS_PATH))
+        print("[ERRO] Arquivo de payloads nao encontrado: {}".format(_PAYLOADS_PATH))
         input("\nPressione Enter para voltar..."); return
 
     payloads_reflected = dados["reflected"]
@@ -300,7 +293,7 @@ def xss_scanner_menu(cursor=None, conn=None, sessao=None, url=None):
         r = session.get(url, timeout=5)
         soup = BeautifulSoup(r.text, 'html.parser')
     except Exception:
-        print("Não foi possível acessar a URL informada.")
+        print("Nao foi possivel acessar a URL informada.")
         input("\nPressione Enter para voltar..."); return
 
     todos = []
@@ -328,7 +321,7 @@ def xss_scanner_menu(cursor=None, conn=None, sessao=None, url=None):
             from db import salvar_resultado
             tipo_label = {"1": "xss_reflected", "2": "xss_stored", "3": "xss_reflected+stored"}.get(modo, "xss")
             salvar_resultado(cursor, conn, alvo_id, tipo_label, resultado_txt)
-            print("\n[✓] Resultado salvo.")
+            print("\n[+] Resultado salvo.")
 
     input("\nPressione Enter para voltar...")
 
@@ -339,7 +332,7 @@ def xss_scanner_menu(cursor=None, conn=None, sessao=None, url=None):
 def port_scan_menu(cursor=None, conn=None, sessao=None, url=None):
     print("Port Scanner\n")
     if not url or url.lower() == "cancelar":
-        print("Operação cancelada."); time.sleep(1); return
+        print("Operacao cancelada."); time.sleep(1); return
     url = normalizar_url(url)
     host = url.replace("https://", "").replace("http://", "").split("/")[0].split(":")[0]
     linhas = []
@@ -372,7 +365,7 @@ def port_scan_menu(cursor=None, conn=None, sessao=None, url=None):
         if alvo_id:
             from db import salvar_resultado
             salvar_resultado(cursor, conn, alvo_id, "port_scan", "\n".join(linhas))
-            print("\n[✓] Resultado salvo.")
+            print("\n[+] Resultado salvo.")
 
     input("\nPressione Enter para voltar...")
 
@@ -384,17 +377,19 @@ def menu_cybersecurity(cursor, conn=None, sessao=None):
     while True:
         limpar_tela()
         ativo = sessao.get('alvo_ativo') if sessao else None
-        status = ("[Alvo: {} — {}]".format(ativo['nome'], ativo['url'])
-                  if ativo else "[nenhum alvo ativo — será solicitado por scan]")
+        status = ("[Alvo: {} - {}]".format(ativo['nome'], ativo['url'])
+                  if ativo else "[nenhum alvo ativo - sera solicitado por scan]")
         print("CyberSecurity  {}\n".format(status))
-        print("1. Análise de Headers HTTP")
-        print("2. Análise de Certificado SSL/TLS")
+        print("1. Analise de Headers HTTP")
+        print("2. Analise de Certificado SSL/TLS")
         print("3. Scanner XSS")
         print("4. Port Scanner")
         print("0. Voltar\n")
-        escolha = input("Escolha uma opção: ").strip()
+        escolha = input("Escolha uma opcao: ").strip()
         if escolha in ["1", "2", "3", "4"]:
             url = _resolver_url(cursor, conn, sessao)
+            if not url:
+                continue
             limpar_tela()
             if escolha == "1":
                 analisar_headers_menu(cursor, conn, sessao, url)
@@ -408,4 +403,4 @@ def menu_cybersecurity(cursor, conn=None, sessao=None):
             carregando("Voltando")
             break
         else:
-            print("Opção inválida."); time.sleep(1)
+            print("Opcao invalida."); time.sleep(1)

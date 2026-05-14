@@ -11,6 +11,7 @@ def conectar_banco():
     conn = sqlite3.connect('azya.db')
     cursor = conn.cursor()
 
+    # Tabela legada — mantida para não quebrar banco existente
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS urls (
             id  INTEGER PRIMARY KEY,
@@ -28,7 +29,8 @@ def conectar_banco():
         )
     """)
 
-    # Sem ON DELETE CASCADE — resultados são mantidos mesmo após exclusão do alvo
+    # alvo_id nullable: resultados avulsos (sem alvo ativo) não são salvos,
+    # mas resultados de alvos excluídos ficam preservados com alvo_id intácto.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS scan_resultados (
             id        INTEGER PRIMARY KEY,
@@ -48,8 +50,6 @@ def conectar_banco():
 # Resultados
 # ---------------------------------------------------------------------------
 def salvar_resultado(cursor, conn, alvo_id, tipo_scan, resultado):
-    # type: (object, object, int, str, str) -> None
-    """Persiste resultado de scan vinculado a um alvo."""
     import datetime
     agora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute(
@@ -60,7 +60,6 @@ def salvar_resultado(cursor, conn, alvo_id, tipo_scan, resultado):
 
 
 def listar_resultados_alvo(cursor, alvo_id):
-    # type: (object, int) -> list
     cursor.execute(
         "SELECT id, tipo_scan, resultado, criado_em "
         "FROM scan_resultados WHERE alvo_id = ? ORDER BY criado_em DESC",
@@ -70,7 +69,6 @@ def listar_resultados_alvo(cursor, alvo_id):
 
 
 def excluir_resultados_alvo(cursor, conn, alvo_id):
-    # type: (object, object, int) -> None
     cursor.execute("DELETE FROM scan_resultados WHERE alvo_id = ?", (alvo_id,))
     conn.commit()
 
@@ -79,7 +77,6 @@ def excluir_resultados_alvo(cursor, conn, alvo_id):
 # Helpers de exibição
 # ---------------------------------------------------------------------------
 def _exibir_alvos(alvos):
-    # type: (list) -> None
     if not alvos:
         print("Nenhum alvo cadastrado.")
         return
@@ -91,7 +88,6 @@ def _exibir_alvos(alvos):
 
 
 def _montar_url_alvo(row):
-    # type: (tuple) -> str
     protocolo, alvo, porta = row[3], row[2], row[4]
     return "{}://{}:{}".format(protocolo, alvo, porta) if porta else "{}://{}".format(protocolo, alvo)
 
@@ -100,7 +96,6 @@ def _montar_url_alvo(row):
 # CRUD Alvos
 # ---------------------------------------------------------------------------
 def listar_alvos(cursor):
-    # type: (object) -> list
     cursor.execute("SELECT id, nome, alvo, protocolo, porta FROM alvos ORDER BY id")
     return cursor.fetchall()
 
@@ -132,8 +127,7 @@ def adicionar_alvo(cursor, conn):
 
 
 def selecionar_alvo_ativo(cursor):
-    # type: (object) -> Optional[dict]
-    """Retorna dict com dados do alvo selecionado, ou None se cancelado."""
+    # type: () -> Optional[dict]
     limpar_tela()
     print("Selecionar Alvo Ativo\n")
     alvos = listar_alvos(cursor)
@@ -174,13 +168,13 @@ def excluir_alvo(cursor, conn):
         result = cursor.fetchone()
         if result:
             confirm = input(
-                "Excluir '{}'? Os resultados de scan vinculados serão mantidos. (s/n): ".format(result[0])
+                "Excluir '{}'? Resultados de scan vinculados serão mantidos. (s/n): ".format(result[0])
             ).lower()
             if confirm == 's':
                 carregando("Excluindo")
                 cursor.execute("DELETE FROM alvos WHERE id = ?", (idx,))
                 conn.commit()
-                print("Excluído! Resultados anteriores preservados.")
+                print("Excluído! Histórico preservado.")
             else:
                 print("Cancelado.")
         else:
@@ -194,7 +188,6 @@ def excluir_alvo(cursor, conn):
 # Submenu Resultados
 # ---------------------------------------------------------------------------
 def submenu_resultados(cursor, conn):
-    """Visualiza e gerencia resultados de scans por alvo."""
     while True:
         limpar_tela()
         print("Resultados de Scans\n")
@@ -220,7 +213,6 @@ def submenu_resultados(cursor, conn):
 
 
 def _submenu_resultados_alvo(cursor, conn, alvo_id, nome_alvo):
-    # type: (object, object, int, str) -> None
     while True:
         limpar_tela()
         print("Resultados — {}\n".format(nome_alvo))
@@ -240,9 +232,7 @@ def _submenu_resultados_alvo(cursor, conn, alvo_id, nome_alvo):
             confirm = input("Limpar todos os resultados deste alvo? (s/n): ").lower()
             if confirm == 's':
                 excluir_resultados_alvo(cursor, conn, alvo_id)
-                print("Resultados removidos.")
-                time.sleep(1)
-                return
+                print("Resultados removidos."); time.sleep(1); return
         else:
             try:
                 idx = int(escolha) - 1
@@ -264,11 +254,6 @@ def _submenu_resultados_alvo(cursor, conn, alvo_id, nome_alvo):
 # Submenu Alvos
 # ---------------------------------------------------------------------------
 def submenu_alvos(cursor, conn, sessao):
-    # type: (object, object, dict) -> None
-    """
-    Gerencia alvos e atualiza sessao['alvo_ativo'] in-place.
-    sessao: {'alvo_ativo': None | dict}
-    """
     while True:
         limpar_tela()
         ativo = sessao.get('alvo_ativo')
@@ -295,7 +280,6 @@ def submenu_alvos(cursor, conn, sessao):
             submenu_resultados(cursor, conn)
         elif escolha == '5':
             excluir_alvo(cursor, conn)
-            # Deativa sessão se o alvo excluído era o ativo
             if ativo:
                 still = cursor.execute(
                     "SELECT id FROM alvos WHERE id = ?", (ativo['id'],)
@@ -307,90 +291,3 @@ def submenu_alvos(cursor, conn, sessao):
             break
         else:
             print("Opção inválida."); time.sleep(1)
-
-
-# ---------------------------------------------------------------------------
-# Submenu URLs (mantido para compatibilidade)
-# ---------------------------------------------------------------------------
-def submenu_urls(cursor, conn):
-    while True:
-        limpar_tela()
-        print("Gerenciamento de URLs\n")
-        print("1. Salvar URL")
-        print("2. Listar URLs")
-        print("3. Excluir URL")
-        print("0. Voltar\n")
-        escolha = input("Escolha uma opção: ").strip()
-        if escolha == "1":
-            salvar_url(cursor, conn)
-        elif escolha == "2":
-            listar_urls(cursor)
-        elif escolha == "3":
-            excluir_url(cursor, conn)
-        elif escolha == "0":
-            carregando("Voltando")
-            break
-        else:
-            print("Opção inválida.")
-            time.sleep(1)
-
-
-def salvar_url(cursor, conn):
-    limpar_tela()
-    print("Salvar URL (ou 'cancelar')\n")
-    url = input("URL: ").strip()
-    if not url or url.lower() == 'cancelar':
-        print("Cancelado."); time.sleep(1); return
-    carregando("Salvando")
-    try:
-        cursor.execute("INSERT INTO urls (url) VALUES (?)", (url,))
-        conn.commit()
-        print("Salvo!")
-    except sqlite3.IntegrityError:
-        print("URL já cadastrada!")
-    time.sleep(1)
-
-
-def listar_urls(cursor):
-    limpar_tela()
-    print("URLs Salvas\n")
-    cursor.execute("SELECT id, url FROM urls")
-    urls = cursor.fetchall()
-    if not urls:
-        print("Nenhuma URL salva.")
-    else:
-        for row in urls:
-            print("{}: {}".format(row[0], row[1]))
-    input("\nPressione Enter para continuar")
-
-
-def excluir_url(cursor, conn):
-    limpar_tela()
-    print("Excluir URL\n")
-    cursor.execute("SELECT id, url FROM urls")
-    urls = cursor.fetchall()
-    if not urls:
-        print("Nenhuma URL para excluir."); time.sleep(2); return
-    for row in urls:
-        print("{}: {}".format(row[0], row[1]))
-    escolha = input("\nExcluir qual ID (Enter para cancelar): ").strip()
-    if not escolha:
-        print("Cancelado."); time.sleep(1); return
-    try:
-        idx = int(escolha)
-        cursor.execute("SELECT url FROM urls WHERE id = ?", (idx,))
-        result = cursor.fetchone()
-        if result:
-            confirm = input("Excluir '{}'? (s/n): ".format(result[0])).lower()
-            if confirm == 's':
-                carregando("Excluindo")
-                cursor.execute("DELETE FROM urls WHERE id = ?", (idx,))
-                conn.commit()
-                print("Excluído!")
-            else:
-                print("Cancelado.")
-        else:
-            print("ID não encontrado.")
-        time.sleep(1)
-    except ValueError:
-        print("Inválido."); time.sleep(1)
