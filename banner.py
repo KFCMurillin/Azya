@@ -5,7 +5,7 @@ BANNER_AZYA = r"""
 (`-') _  (`-')   (`-')  _   
 (OO ).-/ ( OO).-> .->  (OO ).-/ 
 / ,---.  ,(_/----. ,--.' ,-./ ,---.  
-| \ /`.\  |__, |(`-')'.' / | \ /`.\ 
+| \ /`.\ |__, |(`-')'.' / | \ /`.\ 
 '-'|_.' | (_/ / (OO \  /  '-'|_.' | 
 (| .-. |  .' .'_  | / /) (| .-. | 
 | | | || |  | `-/ /`   | | | | 
@@ -15,7 +15,7 @@ BANNER_AZYA = r"""
 INFOS = [
     "Azya Cybersecurity Toolkit",
     "Versão: 1.0",
-    "Autor: VampLin",
+    "Autor: Eater",
     "-" * 40,
     "Ferramenta para testes e análises de segurança",
 ]
